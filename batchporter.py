@@ -1,6 +1,3 @@
-# add a else statement if make vmt cant find vtfs when fuzzy texture matching is enabled
-# make normal and color seperated
-
 import json
 
 import glob
@@ -97,83 +94,125 @@ def settings_menu(config):
             clear_console()
             break
 
+def gather_files(root_dir, max_depth=2):
+    """
+    Recursively gather .smd and .dmx files up to max_depth in subfolders.
+    Returns a dict with keys as immediate subfolder names and values as dict:
+    {'smd': [...], 'dmx': [...]}
+    """
+    result = {}
+
+    # List immediate subfolders in root_dir
+    for subfolder in os.listdir(root_dir):
+        subfolder_path = os.path.join(root_dir, subfolder)
+        if not os.path.isdir(subfolder_path):
+            continue
+
+        smds = []
+        dmxs = []
+
+        # Walk with depth limit 2
+        for current_path, dirs, files in os.walk(subfolder_path):
+            # Calculate depth relative to subfolder_path
+            rel_path = os.path.relpath(current_path, subfolder_path)
+            depth = rel_path.count(os.sep)
+            if depth > max_depth:
+                # Don't go deeper
+                dirs[:] = []
+                continue
+
+            for file in files:
+                ext = file.lower().split('.')[-1]
+                if ext == 'smd':
+                    smds.append(os.path.join(current_path, file))
+                elif ext == 'dmx':
+                    dmxs.append(os.path.join(current_path, file))
+
+        result[subfolder] = {'smd': smds, 'dmx': dmxs}
+
+    return result
+
+def make_qc_path(file_path, base_folder):
+    return os.path.relpath(file_path, base_folder).replace("\\", "/")
+
 def generate_qc():
-
-    #Generates QC files based on .smd files found within a given parent directory.
-
     clear_console()
+    
+    root_dir = questionary.text("Enter directory containing dmxs and smds:").ask().strip()
+    base_modelname = questionary.text("Enter base $modelname:").ask().strip()
+    cdmaterials = questionary.text("Enter $cdmaterials:").ask().strip()
 
-    print('In QC generation Tab\n')
+    files_by_folder = gather_files(root_dir, max_depth=2)
 
-    # Ask user for the parent directory containing .smd files and the output model directory
-    parent_dir = questionary.text(
-        "Input Parent Dir:"
-    ).ask().strip()
+    for folder, file_dict in files_by_folder.items():
+        smds = file_dict['smd']
+        dmxs = file_dict['dmx']
 
-    model_dir = questionary.text(
-        "Input $modelname Dir:"
-    ).ask().strip()
+        # Skip empty folders
+        if not (smds or dmxs):
+            continue
 
-    material_dir = questionary.text(
-        "Input $cdmaterials Dir:"
-    ).ask().strip()
+        folder_path = os.path.join(root_dir, folder)  # <--- moved here
 
-    # Normalize paths to avoid issues with different OS path formats
-    parent_dir = os.path.normpath(parent_dir)
-    model_dir = os.path.normpath(model_dir)
+        contains_nested = any(
+            os.path.isdir(os.path.join(folder_path, subdir))
+            for subdir in os.listdir(folder_path)
+        )
 
-    print(f"Searching for .smd files in: {parent_dir}")
+        smds_with_triangles = []
+        smds_without_triangles = []
 
-    # Recursively find all .smd files under the parent directory
-    smd_files = glob.glob(os.path.join(parent_dir, '**', '*.smd'), recursive=True)
+        for smd_file in smds:
+            try:
+                with open(smd_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    contents = f.read()
+                    if "triangles" in contents.lower():
+                        smds_with_triangles.append(smd_file)
+                    else:
+                        smds_without_triangles.append(smd_file)
+            except Exception as e:
+                print(f"Could not read {smd_file}: {e}")
 
-    # Collect unique directories that contain .smd files
-    unique_folders = set(os.path.dirname(smd) for smd in smd_files)
+        # === Build QC content ===
+        qc_lines = []
 
-    # Process each folder containing .smd files
-    for folder in unique_folders:
-        # Get all .smd files within this folder
-        smds_in_folder = [f for f in smd_files if f.startswith(folder)]
-        if not smds_in_folder:
-            continue  # Skip if no files found (unlikely)
+        # Only prefix folder name if it contains subfolders
+        modelname = f"{base_modelname}/{folder}/{folder}.mdl" if contains_nested else base_modelname
+        qc_lines.append(f"$modelname \"{modelname}\"")
+        qc_lines.append(f'$cdmaterials "{cdmaterials}"\n')
+        qc_lines.append('$maxverts 65530')
 
-        model_lines = []
-        smd_names = []
+        for file_path in smds_with_triangles + dmxs:
+            rel_path = make_qc_path(file_path, folder_path)
 
-        # Extract base names of .smd files and prepare $model lines
-        for smd_path in smds_in_folder:
-            smd_name = os.path.splitext(os.path.basename(smd_path))[0]
-            smd_names.append(smd_name)
-            model_lines.append(f'$model "{smd_name}" "{smd_name}.smd"')
+            qc_lines.append(f"$model \"{rel_path}\"")
 
-        if not smd_names:
-            continue  # Skip if no valid .smd names found
+        if smds_without_triangles:
+            for smd_file in smds_without_triangles:
+                rel_path = make_qc_path(smd_file, folder_path)
+                sequence_name = os.path.splitext(os.path.basename(smd_file))[0]
+                qc_lines.append(f"\n$sequence {sequence_name} {{")
+                qc_lines.append(f"    \"{rel_path}\"")
+                qc_lines.append("}")
+        elif smds:
+            rel_path = make_qc_path(smds[0], folder_path)
+            qc_lines.append(f"\n$sequence idle {{")
+            qc_lines.append(f"    \"{rel_path}\"")
+            qc_lines.append("}")
 
-        # Extract last folder name to use as the model name
-        folder_name = os.path.basename(folder.rstrip(os.sep))
-        
-        # Construct the $modelname line pointing to the output model location
-        modelname_line = f'$modelname "{os.path.join(model_dir, folder_name)}.mdl"'
+        qc_lines.append("\n$mostlyopauqe")
 
-        # Construct the $sequence block referencing the first .smd file (default sequence)
-        sequence_block = f'''$sequence "{smd_names[0]}" {{
-    "{smd_names[0]}.smd"
-    }}'''
+        # === Write QC to subfolder ===
+        folder_path = os.path.join(root_dir, folder)
+        qc_filename = f"{folder}.qc" if contains_nested else "model.qc"
+        qc_path = os.path.join(folder_path, qc_filename)
 
-        nasty = r'\textures'
-
-        # Combine all parts to form the complete .qc file content
-        qc_content = f"{modelname_line}\n" + f'$cdmaterials "{os.path.join(material_dir, folder_name)}"\n' + '\n$maxverts 65530' + "\n".join(model_lines) + "\n" + sequence_block + "\n\n$mostlyopaque"
-
-        # Set the output .qc file path in the same folder
-        qc_filename = f"{folder_name}.qc"
-        qc_path = os.path.join(folder, qc_filename)
-
-        print(f"\tWriting QC file: {qc_path}")
-        
-        # Write the QC content to the file using Unix-style newlines
-        with open(qc_path, 'w', newline='\n') as f:
-            f.write(qc_content)
+        try:
+            with open(qc_path, 'w', encoding='utf-8') as f:
+                f.write("\n".join(qc_lines))
+            print(f"✓ Wrote QC to: {qc_path}")
+        except Exception as e:
+            print(f"Failed to write QC for {folder}: {e}")
 
 compile_log = [] #stores studiomdl output
 
