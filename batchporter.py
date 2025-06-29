@@ -163,7 +163,7 @@ def generate_qc():
         nasty = r'\textures'
 
         # Combine all parts to form the complete .qc file content
-        qc_content = f"{modelname_line}\n" + f'$cdmaterials "{os.path.join(material_dir, folder_name)}"\n' + "$scale 41\n\n" + "\n".join(model_lines) + "\n" + sequence_block + "\n\n$mostlyopaque"
+        qc_content = f"{modelname_line}\n" + f'$cdmaterials "{os.path.join(material_dir, folder_name)}"\n' + '\n$maxverts 65530' + "\n".join(model_lines) + "\n" + sequence_block + "\n\n$mostlyopaque"
 
         # Set the output .qc file path in the same folder
         qc_filename = f"{folder_name}.qc"
