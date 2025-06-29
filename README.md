@@ -23,14 +23,14 @@ parent/
 ```
 
 ```
-? Input Parent Dir: C:\parent
+? Enter Parent directory containing the content: C:\parent
 ```
 this will make a qc for every sub-directory that contains smds in your parent-directory
 
 after so u input a $modelname. this will be used in the $modelname - *Note: the subfolder will be added as the mdl and as a folder before it*
 
 ```
-? Input $modelname Dir: Douran\Fortnite\Characters
+? Enter base $modelname: Douran\Fortnite\Characters
 ```
 result in qc
 ```
@@ -38,7 +38,7 @@ $modelname "Douran\Fortnite\Characters\Character01\Character01.mdl"
 ```
 last step in the process is to input your $cdmaterials
 ```
-? Input $cdmaterials Dir: models\Douran\Fortnite\Characters\01
+? Enter $cdmaterials: models\Douran\Fortnite\Characters\01
 ```
 result in qc
 ```
