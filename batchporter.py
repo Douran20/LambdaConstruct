@@ -6,6 +6,7 @@ import subprocess
 
 import re
 from rapidfuzz import fuzz
+import shutil
 
 from prompt_toolkit.shortcuts import button_dialog
 from prompt_toolkit.styles import Style
@@ -32,12 +33,12 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, 'r') as f:
             return json.load(f)
-    # Default configuration
     return {
         'studiomdl_path': '',
         'game_dir': '',
         'use_verbose': True,
-        'use_nop4': True
+        'use_nop4': True,
+        'debug': True
     }
 
 def save_config(config):
@@ -52,6 +53,7 @@ def settings_menu(config):
         print(f"2. game_dir: {config['game_dir']}")
         print(f"3. Use -verbose: {'ON' if config['use_verbose'] else 'OFF'}")
         print(f"4. Use -nop4: {'ON' if config['use_nop4'] else 'OFF'}")
+        print(f"5. Debug mode: {'ON' if config.get('debug') else 'OFF'}")
 
         choice = questionary.select(
             "Edit which setting?",
@@ -60,6 +62,7 @@ def settings_menu(config):
                 "Change game_dir",
                 "Toggle -verbose",
                 "Toggle -nop4",
+                "Toggle debug mode",
                 "Return"
             ]
         ).ask()
@@ -90,9 +93,17 @@ def settings_menu(config):
             config['use_nop4'] = not config['use_nop4']
             save_config(config)
 
+        elif choice == "Toggle debug mode":
+            config['debug'] = not config.get('debug', False)
+            save_config(config)
+
         elif choice == "Return":
             clear_console()
             break
+
+def debug_print(message, config):
+    if config.get('debug'):
+        print(f"[DEBUG] {message}")
 
 def gather_files(root_dir, max_depth=2):
     """
@@ -138,7 +149,7 @@ def make_qc_path(file_path, base_folder):
 def generate_qc():
     clear_console()
     
-    root_dir = questionary.text("Enter directory containing dmxs and smds:").ask().strip()
+    root_dir = questionary.text("Enter Parent directory containing the content:").ask().strip()
     base_modelname = questionary.text("Enter base $modelname:").ask().strip()
     cdmaterials = questionary.text("Enter $cdmaterials:").ask().strip()
 
@@ -356,12 +367,10 @@ def batch_generate_vmts():
             i = 0
             while i < len(lines):
                 line = lines[i].strip()
-
                 if line == "triangles":
                     in_triangles = True
                     i += 1
                     continue
-
                 if in_triangles:
                     if line == "end":
                         break
@@ -372,8 +381,16 @@ def batch_generate_vmts():
                         i += 1
                 else:
                     i += 1
-
         return sorted(material_names)
+
+    def extract_cdmaterials_paths(qc_path):
+        cdmaterials = set()
+        with open(qc_path, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                match = re.search(r'\$cdmaterials\s+"([^"]+)"', line, re.IGNORECASE)
+                if match:
+                    cdmaterials.add(match.group(1).strip().replace('\\', '/').rstrip('/'))
+        return list(cdmaterials)
 
     def find_best_vtfs_for_material(material_names, vtf_dir, color_suffixes, normal_suffixes):
         vtf_files = [os.path.basename(vtf).lower().replace('.vtf', '') for vtf in glob.glob(os.path.join(vtf_dir, "*.vtf"))]
@@ -388,7 +405,6 @@ def batch_generate_vmts():
 
             for vtf in vtf_files:
                 score = fuzz.partial_ratio(mat_lower, vtf)
-
                 if any(vtf.endswith(suffix.lower()) for suffix in color_suffixes) and score > best_color_score:
                     best_color = vtf
                     best_color_score = score
@@ -403,65 +419,176 @@ def batch_generate_vmts():
 
         return matched_textures
 
-    def generate_vmt_content(texture_paths):
-        lines = ['"VertexLitGeneric"\n{']
-        if texture_paths.get('color'):
-            lines.append(f'    "$basetexture" "models/{texture_paths["color"]}"')
-        if texture_paths.get('normal'):
-            lines.append(f'    "$bumpmap" "models/{texture_paths["normal"]}"')
-        lines.append('}')
-        return "\n".join(lines)
-
-    def save_as_vmt(material_names, output_dir, texture_paths=None, default_template=''):
-        os.makedirs(output_dir, exist_ok=True)
-
+    def save_as_vmt(material_names, output_base_dir, texture_paths=None, default_template=''):
         for name in material_names:
+            content = default_template
+            if texture_paths and name in texture_paths:
+                tex = texture_paths[name]
+                base = f'"$basetexture" "models/{tex["color"]}"' if tex.get("color") else ''
+                bump = f'"$bumpmap" "models/{tex["normal"]}"' if tex.get("normal") else ''
+                content = content.replace('"$basetexture" ""', base or '"$basetexture" ""')
+                content = content.replace('"$bumpmap"     ""', bump or '"$bumpmap"     ""')
+
+            output_dir = os.path.join(output_base_dir)
+            os.makedirs(output_dir, exist_ok=True)
             vmt_path = os.path.join(output_dir, f"{name}.vmt")
             with open(vmt_path, 'w', encoding='utf-8') as vmt_file:
-                if texture_paths:
-                    content = generate_vmt_content(texture_paths.get(name, {}))
-                else:
-                    content = default_template
                 vmt_file.write(content)
 
+    def find_model_subfolders(parent_dir):
+        debug_print(f"Scanning for model subfolders in: {parent_dir}", config)
+        valid_subfolders = set()
+        for root, dirs, files in os.walk(parent_dir):
+            has_smd = any(f.lower().endswith(".smd") for f in files)
+            has_qc = any(f.lower().endswith(".qc") for f in files)
+            if has_smd or has_qc:
+                debug_print(f"Found valid model folder: {root}", config)
+                valid_subfolders.add(root)
+        return sorted(valid_subfolders)
+
+    # ------------------- User Inputs -------------------
     while True:
-        directory = questionary.path("Enter path to model directory: ").ask().strip()
-        smd_files = glob.glob(os.path.join(directory, "*.smd"))
-        if smd_files:
+        parent_directory = questionary.path("Enter path to parent model directory: ").ask().strip()
+        config = load_config()  # Load early to use for debug printing
+        debug_print(f"User provided directory: {parent_directory}", config)
+        model_dirs = find_model_subfolders(parent_directory)
+        if model_dirs:
+            debug_print(f"Found {len(model_dirs)} valid model folder(s).", config)
             break
         else:
-            print("/!\ Directory doesn't contain any .smd files. Please try again.")
+            print("/!\\ No .smd or .qc files found in any subdirectories. Try again.")
 
-    output_vmt_dir = questionary.path("Enter path to output .vmt directory: ").ask().strip()
-    while True:
-        vtf_dir = questionary.path("Enter path to VTF directory (usually same as vmt dir): ").ask().strip()
-        vtf_files = glob.glob(os.path.join(vtf_dir, "*.vtf"))
-        if vtf_files:
-            break
+    game_materials_dir = os.path.join(config['game_dir'], 'materials')
+    debug_print(f"Game materials directory: {game_materials_dir}", config)
+
+    for model_dir in model_dirs:
+        print(f"\n--- Processing: {model_dir} ---")
+
+        smd_files = glob.glob(os.path.join(model_dir, "*.smd"))
+        qc_files = glob.glob(os.path.join(model_dir, "*.qc"))
+        debug_print(f"Found {len(smd_files)} SMDs, {len(qc_files)} QCs.", config)
+
+        if not smd_files:
+            print("  Skipped — no .smd files found.")
+            continue
+
+        # Extract materials
+        materials = extract_materials_from_smds(model_dir)
+        debug_print(f"Extracted {len(materials)} materials from SMDs.", config)
+
+        if not materials:
+            print("  No materials found in .smds.")
+            continue
+
+        # Extract $cdmaterials
+        cdmaterials_paths = set()
+        for qc in qc_files:
+            paths = extract_cdmaterials_paths(qc)
+            cdmaterials_paths.update(paths)
+            debug_print(f"Extracted $cdmaterials from {qc}: {paths}", config)
+
+        print(f"  Found materials:")
+        for mat in materials:
+            print(f"    - {mat}")
+
+        if cdmaterials_paths:
+            print(f"  Found $cdmaterials paths:")
+            for p in cdmaterials_paths:
+                print(f"    - {p}")
         else:
-            print("/!\ Directory doesn't contain any .vtf files. Please try again.")
+            print("  No $cdmaterials paths found.")
 
-    materials = extract_materials_from_smds(directory)
-    print("\nFound material names:")
-    for mat in materials:
-        print(f"  - {mat}")
+        default_cdmat = list(cdmaterials_paths)[0] if cdmaterials_paths else "models"
+        output_base_dir = os.path.join(game_materials_dir, default_cdmat)
+        debug_print(f"VMTs will be saved to: {output_base_dir}", config)
 
-    enable_fuzzy = input("\nEnable fuzzy texture matching? (y/n): ").strip().lower() == 'y'
+        while True:
+            answer = questionary.text("Use $cdmaterials as VTF texture folder? (y/n): ").ask()
+            if answer is None:
+                continue  # handle empty input or Ctrl+C gracefully if needed
+            answer = answer.strip().lower()
+            if answer in ('y', 'n'):
+                use_cdmat_for_vtf = (answer == 'y')
+                break
+            print("Please enter 'y' or 'n' and then press Enter.")
 
-    if enable_fuzzy:
-        color_suffixes = input("Enter color texture suffix(es), comma-separated (e.g. col,diff): ").split(',')
-        normal_suffixes = input("Enter normal texture suffix(es), comma-separated (e.g. nrm,norm): ").split(',')
-        texture_paths = find_best_vtfs_for_material(materials, vtf_dir, color_suffixes, normal_suffixes)
-        save_as_vmt(materials, output_vmt_dir, texture_paths)
-    else:
+        debug_print(f"Use cdmaterials for VTF input: {use_cdmat_for_vtf}", config)
+
+        if use_cdmat_for_vtf and cdmaterials_paths:
+            vtf_dirs = [
+                os.path.join(
+                    game_materials_dir,
+                    path.replace("\\", "/").lstrip("/").removeprefix("materials/")
+                ) for path in cdmaterials_paths
+            ]
+            vtf_files = []
+            for d in vtf_dirs:
+                found = glob.glob(os.path.join(d, "*.vtf"))
+                vtf_files += found
+                debug_print(f"Found {len(found)} VTFs in: {d}", config)
+
+            if not vtf_files:
+                print("  No .vtf files found in $cdmaterials folders. Falling back to manual input.")
+                use_cdmat_for_vtf = False
+
+        if not use_cdmat_for_vtf:
+            while True:
+                vtf_dir = questionary.path("Enter path to VTF directory: ").ask().strip()
+                debug_print(f"User VTF directory input: {vtf_dir}", config)
+                vtf_files = glob.glob(os.path.join(vtf_dir, "*.vtf"))
+                debug_print(f"Found {len(vtf_files)} VTFs.", config)
+                if vtf_files:
+                    break
+                else:
+                    print("/!\\ Directory doesn't contain any .vtf files. Please try again.")
+
         vmtTemplate = '''"VertexLitGeneric"
-{
-    "$basetexture" "models/your_texture_here"
-}
-'''
-        save_as_vmt(materials, output_vmt_dir, texture_paths=None, default_template=vmtTemplate)
+    {
+        "$basetexture" ""
+        "$bumpmap"     ""
 
-    print(f"\n✔ Saved {len(materials)} .vmt files to '{output_vmt_dir}'")
+        "$phong" "1"
+        "$phongboost" "1"
+        "$phongexponent" "1"
+
+    //generated by LambdaConstruct
+    }
+    '''
+
+        enable_fuzzy = questionary.text("\nEnable fuzzy texture matching? (y/n): ").ask().strip().lower() == 'y'
+        debug_print(f"Fuzzy texture matching: {enable_fuzzy}", config)
+
+        if enable_fuzzy:
+            color_suffixes = input("Enter color texture suffix(es), comma-separated (e.g. col,diff): ").split(',')
+            normal_suffixes = input("Enter normal texture suffix(es), comma-separated (e.g. nrm,norm): ").split(',')
+            debug_print(f"Color suffixes: {color_suffixes}", config)
+            debug_print(f"Normal suffixes: {normal_suffixes}", config)
+
+            if use_cdmat_for_vtf:
+                debug_print("Creating temp dir for VTF matching from cdmaterials folders.", config)
+                temp_vtf_dir = os.path.join(model_dir, "_combined_vtf_temp")
+                os.makedirs(temp_vtf_dir, exist_ok=True)
+                for file in vtf_files:
+                    dst = os.path.join(temp_vtf_dir, os.path.basename(file))
+                    if not os.path.exists(dst):
+                        try:
+                            os.link(file, dst)
+                            debug_print(f"Linked VTF: {file} -> {dst}", config)
+                        except:
+                            shutil.copy2(file, dst)
+                            debug_print(f"Copied VTF: {file} -> {dst}", config)
+                texture_paths = find_best_vtfs_for_material(materials, temp_vtf_dir, color_suffixes, normal_suffixes)
+            else:
+                texture_paths = find_best_vtfs_for_material(materials, vtf_dir, color_suffixes, normal_suffixes)
+
+            debug_print("Matched textures:", config)
+            for mat, tex in texture_paths.items():
+                debug_print(f"{mat} -> color: {tex['color']} | normal: {tex['normal']}", config)
+
+            save_as_vmt(materials, output_base_dir, texture_paths, default_template=vmtTemplate)
+        else:
+            debug_print("Saving VMTs with template only (no textures).", config)
+            save_as_vmt(materials, output_base_dir, texture_paths=None, default_template=vmtTemplate)
 
 def setup():
     clear_console()
@@ -486,8 +613,9 @@ def setup():
     config = {
         'studiomdl_path': os.path.abspath(studiomdl_path),
         'game_dir': os.path.abspath(game_dir),
-        'use_verbose': False,
-        'use_nop4': False
+        'use_verbose': True,
+        'use_nop4': True,
+        'debug' : False
     }
 
     save_config(config)
