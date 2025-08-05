@@ -1,5 +1,5 @@
 # LambdaConstruct
-LambdaConstruct is a Source Engine Batch Model Porting Utility for Windows design to speed up the process
+LambdaConstruct is a Source Engine Batch Model Porting Utility for Windows
 ---
 
 ## about
