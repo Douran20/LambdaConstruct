@@ -1,0 +1,24 @@
+{
+    "template_path": "template/vmt_template.txt",
+    "suffix_mappings": {
+        "$basetexture": [
+            "_color",
+            "_diffuse",
+            "_albedo",
+            "_albedotransparency"
+        ],
+        "$bumpmap": [
+            "_bump",
+            "_normal",
+            "_normalmap"
+        ],
+        "$phongexponenttexture": [
+            "_phongexp",
+            "_phongexponent",
+            "_maskmap"
+        ]
+    },
+    "material_suffix_templates": {
+        "_metal": "template/metal_template.txt"
+    }
+}

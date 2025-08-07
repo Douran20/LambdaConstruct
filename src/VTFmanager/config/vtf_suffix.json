@@ -1,0 +1,33 @@
+{
+    "vtfcmd_path": "D:\\programs\\source engine utils\\src\\VTFmanager\\VTFCmd\\VTFCmd.exe",
+    "rules": {
+        "_normal": {
+            "format": "RGBA8888",
+            "alphaformat": "RGBA8888",
+            "extra_flags": [
+                "-nomipmaps"
+            ]
+        },
+        "_alpha": {
+            "format": "DXT5",
+            "alphaformat": "DXT5",
+            "extra_flags": [
+                "-nomipmaps"
+            ]
+        },
+        "_color": {
+            "format": "DXT1",
+            "alphaformat": null,
+            "extra_flags": [
+                "-nomipmaps"
+            ]
+        },
+        "default": {
+            "format": "DXT1",
+            "alphaformat": null,
+            "extra_flags": [
+                "-nomipmaps"
+            ]
+        }
+    }
+}

@@ -1,0 +1,2 @@
+input = "D:\programs\source engine utils\test_files"
+materials = "D:\SteamLibrary\steamapps\common\SourceFilmmaker\game\usermod\materials"

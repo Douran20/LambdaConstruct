@@ -1,0 +1,9 @@
+"vertexlitgeneric"
+{
+    $basetexture "%basetexture%"
+    $bumpmap "%bumpmap%"
+
+    $phong 1
+    $phongboost 1.0
+    $phongexponenttexture "%phongexponenttexture%"
+}

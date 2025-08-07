@@ -1,0 +1,4 @@
+# Comments start with a hash and are ignored
+
+input = "D:\SteamLibrary\steamapps\common\SourceFilmmaker\game\usermod\materials\models\douran\cock\scpSL\weapons\FR-MG-0\textures" output = "D:\SteamLibrary\steamapps\common\SourceFilmmaker\game\usermod\materials\models\douran\cock\scpSL\weapons\FR-MG-0\textures"
+input = "D:\SteamLibrary\steamapps\common\SourceFilmmaker\game\usermod\materials\models\douran\cock\scpSL\weapons\Jailbird\textures"
