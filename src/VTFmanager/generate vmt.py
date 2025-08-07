@@ -13,8 +13,6 @@ from lib import SMDpraser as praser
 # Paths
 tmp_dir = r"D:\programs\source engine utils\test_files"
 CONFIG = os.path.join(os.path.dirname(__file__), 'config', 'vtf_suffix_matching.json')
-# gets the material suffix from config
-
 
 # config manager
 class ConfigManager:
